@@ -375,4 +375,6 @@ def debug_accounts():
 if __name__ == '__main__':
     STATE['accounts'] = load_accounts()
     print(f"Loaded {len(STATE['accounts'])} accounts.")
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    # Render.com için host ve port ayarları
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
