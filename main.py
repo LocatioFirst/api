@@ -43,7 +43,7 @@ lock = threading.Lock()
 
 def load_accounts():
     """Loads accounts from hardcoded list."""
-    return [
+    accs = [
         {'email': 'mqix9v7v53bjc82@spamok.com', 'password': 'windows700'},
         {'email': 'v0oo59qdcd1atml@spamok.com', 'password': 'windows700'},
         {'email': '372z6yqtv6ou4k2@spamok.com', 'password': 'windows700'},
@@ -68,6 +68,7 @@ def load_accounts():
         {'email': '6o0w57u9r4rrahf@spamok.com', 'password': 'windows700'},
         {'email': '440ravi1w7b8dmx@spamok.com', 'password': 'windows700'}
     ]
+    return accs
 
 def remove_account_from_disk(email):
     """Removes an account from disk only."""
