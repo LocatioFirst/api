@@ -300,7 +300,7 @@ def process_video_task(task_id, params):
             return
 
         # SUCCESS: Remove account from file and memory
-        remove_account(account['email'])
+        #remove_account(account['email'])
 
         api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
         
