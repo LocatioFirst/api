@@ -43,46 +43,31 @@ lock = threading.Lock()
 
 def load_accounts():
     """Loads accounts from hardcoded list."""
-    accounts_data = [
-        "mqix9v7v53bjc82@spamok.com:windows700:a",
-        "v0oo59qdcd1atml@spamok.com:windows700:a",
-        "372z6yqtv6ou4k2@spamok.com:windows700:a",
-        "nkhelrx442imqp4@spamok.com:windows700:a",
-        "6sfjxbgiz3jvq1t@spamok.com:windows700:a",
-        "5juy0vkjr9kn9iv@spamok.com:windows700:a",
-        "fm6ic3ozbspl3fb@spamok.com:windows700:a",
-        "5b05bkynafvto6k@spamok.com:windows700:a",
-        "1giona6l8colq4k@spamok.com:windows700:a",
-        "63fnko3neyobf0w@spamok.com:windows700:a",
-        "86m12843kd54rip@spamok.com:windows700:a",
-        "un8wxezpzii6ja1@spamok.com:windows700:a",
-        "jgovnzx8co3biti@spamok.com:windows700:a",
-        "8722cin3p7i5owa@spamok.com:windows700:a",
-        "vrqsuvol263wc23@spamok.com:windows700:a",
-        "qcbyqnucvv9957h@spamok.com:windows700:a",
-        "gj4nm3lbuztjw47@spamok.com:windows700:a",
-        "mm054a55odwlfk5@spamok.com:windows700:a",
-        "5iw2uoni28ikumq@spamok.com:windows700:a",
-        "hsdkgm97d7brynv@spamok.com:windows700:a",
-        "x3rodjkjz4pihfu@spamok.com:windows700:a",
-        "6o0w57u9r4rrahf@spamok.com:windows700:a",
-        "440ravi1w7b8dmx@spamok.com:windows700:a"
+    return [
+        {'email': 'mqix9v7v53bjc82@spamok.com', 'password': 'windows700:a'},
+        {'email': 'v0oo59qdcd1atml@spamok.com', 'password': 'windows700:a'},
+        {'email': '372z6yqtv6ou4k2@spamok.com', 'password': 'windows700:a'},
+        {'email': 'nkhelrx442imqp4@spamok.com', 'password': 'windows700:a'},
+        {'email': '6sfjxbgiz3jvq1t@spamok.com', 'password': 'windows700:a'},
+        {'email': '5juy0vkjr9kn9iv@spamok.com', 'password': 'windows700:a'},
+        {'email': 'fm6ic3ozbspl3fb@spamok.com', 'password': 'windows700:a'},
+        {'email': '5b05bkynafvto6k@spamok.com', 'password': 'windows700:a'},
+        {'email': '1giona6l8colq4k@spamok.com', 'password': 'windows700:a'},
+        {'email': '63fnko3neyobf0w@spamok.com', 'password': 'windows700:a'},
+        {'email': '86m12843kd54rip@spamok.com', 'password': 'windows700:a'},
+        {'email': 'un8wxezpzii6ja1@spamok.com', 'password': 'windows700:a'},
+        {'email': 'jgovnzx8co3biti@spamok.com', 'password': 'windows700:a'},
+        {'email': '8722cin3p7i5owa@spamok.com', 'password': 'windows700:a'},
+        {'email': 'vrqsuvol263wc23@spamok.com', 'password': 'windows700:a'},
+        {'email': 'qcbyqnucvv9957h@spamok.com', 'password': 'windows700:a'},
+        {'email': 'gj4nm3lbuztjw47@spamok.com', 'password': 'windows700:a'},
+        {'email': 'mm054a55odwlfk5@spamok.com', 'password': 'windows700:a'},
+        {'email': '5iw2uoni28ikumq@spamok.com', 'password': 'windows700:a'},
+        {'email': 'hsdkgm97d7brynv@spamok.com', 'password': 'windows700:a'},
+        {'email': 'x3rodjkjz4pihfu@spamok.com', 'password': 'windows700:a'},
+        {'email': '6o0w57u9r4rrahf@spamok.com', 'password': 'windows700:a'},
+        {'email': '440ravi1w7b8dmx@spamok.com', 'password': 'windows700:a'}
     ]
-    
-    accs = []
-    try:
-        for line in accounts_data:
-            line = line.strip()
-            if line and ':' in line:
-                parts = line.split(':')
-                if len(parts) >= 2:
-                    email = parts[0].strip()
-                    pw = parts[1].strip()
-                    accs.append({'email': email, 'password': pw})
-    except Exception as e:
-        print(f"Error loading accounts: {e}")
-    
-    return accs
 
 def remove_account_from_disk(email):
     """Removes an account from disk only."""
