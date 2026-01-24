@@ -85,14 +85,16 @@ def remove_account_from_disk(email):
         print(f"Error removing account from file: {e}")
 
 def get_next_account():
-    """Gets the first available account and removes it from the pool (locking)."""
+    """Gets next account in rotation and moves it to end of list (döngüsel kullanım)."""
     global STATE
     with lock:
         if not STATE['accounts']:
             return None
-        # pop(0) ensures sequential processing (first in, first out)
-        # and "locking" because it's no longer in the available pool.
-        return STATE['accounts'].pop(0)
+        # İlk hesabı al
+        account = STATE['accounts'].pop(0)
+        # Sona ekle (böylece hesaplar sürekli döngüde kalır)
+        STATE['accounts'].append(account)
+        return account
 
 def refresh_quota(token):
     """Optional but might be required to activate session."""
@@ -224,8 +226,8 @@ def process_image_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Remove account from file
-        remove_account_from_disk(account['email'])
+        # SUCCESS: Remove account from file (artık döngüde olduğu için diskten silmeye gerek yok)
+        # remove_account_from_disk(account['email'])
 
         api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
         STATE['tasks'][task_id]['logs'].append(f"API Task ID: {api_task_id}")
@@ -300,8 +302,8 @@ def process_video_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Remove account from file and memory
-        #remove_account(account['email'])
+        # SUCCESS: Hesap döngüde olduğu için silmeye gerek yok
+        # remove_account(account['email'])
 
         api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
         
