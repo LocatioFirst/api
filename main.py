@@ -14,7 +14,9 @@ app = Flask(__name__)
 # --- Configuration & Constants ---
 ACCOUNTS_FILE = 'accounts.txt'
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
+SERVER_API_KEY = "sk_live_7f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
 
+# Deevid URLs
 URL_AUTH = "https://sp.deevid.ai/auth/v1/token?grant_type=password"
 URL_UPLOAD = "https://api.deevid.ai/file-upload/image"
 URL_SUBMIT_IMG = "https://api.deevid.ai/text-to-image/task/submit"
@@ -23,6 +25,11 @@ URL_SUBMIT_TXT_VIDEO = "https://api.deevid.ai/text-to-video/task/submit"
 URL_ASSETS = "https://api.deevid.ai/my-assets?limit=50&assetType=All&filter=CREATION"
 URL_VIDEO_TASKS = "https://api.deevid.ai/video/tasks?page=1&size=20"
 URL_QUOTA = "https://api.deevid.ai/subscription/plan"
+
+# ElevenLabs Configuration
+ELEVENLABS_API_KEY = "sk_6c017bbed12d6ad43ff5b469d03a532f5c8c3714b9f70602"
+ELEVENLABS_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech"
+ELEVENLABS_VOICES_URL = "https://api.elevenlabs.io/v1/voices"
 
 DEVICE_HEADERS = {
     "x-device": "TABLET",
@@ -40,6 +47,20 @@ STATE = {
 lock = threading.Lock()
 
 # --- Helper Functions ---
+
+def verify_api_key():
+    """Verifies the API key from request headers."""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return False
+    
+    # Support both "Bearer <key>" and direct key
+    if auth_header.startswith('Bearer '):
+        provided_key = auth_header[7:]
+    else:
+        provided_key = auth_header
+    
+    return provided_key == SERVER_API_KEY
 
 def load_accounts():
     """Loads accounts from accounts.txt."""
@@ -59,8 +80,6 @@ def load_accounts():
     except Exception as e:
         print(f"Error loading accounts: {e}")
     return accs
-
-STATE['accounts'] = load_accounts()
 
 def remove_account_from_disk(email):
     """Removes an account from disk only."""
@@ -82,8 +101,6 @@ def get_next_account():
     with lock:
         if not STATE['accounts']:
             return None
-        # pop(0) ensures sequential processing (first in, first out)
-        # and "locking" because it's no longer in the available pool.
         return STATE['accounts'].pop(0)
 
 def refresh_quota(token):
@@ -109,7 +126,6 @@ def login_with_retry():
             break
         
         tried_count += 1
-        # Minimal headers exactly as in original script
         headers = {
             "apikey": API_KEY,
         }
@@ -119,7 +135,6 @@ def login_with_retry():
             "gotrue_meta_security": {}
         }
         try:
-            # Note: json= automatically sets Content-Type to application/json
             resp = requests.post(URL_AUTH, json=payload, headers=headers, timeout=10)
             if resp.status_code == 200:
                 token = resp.json().get('access_token')
@@ -178,7 +193,6 @@ def process_image_task(task_id, params):
 
         headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
         
-        # Handle Base64 image for img2img
         user_image_ids = []
         if params.get('image'):
             img_data = base64.b64decode(params['image'])
@@ -190,7 +204,6 @@ def process_image_task(task_id, params):
                 STATE['tasks'][task_id]['logs'].append("Image upload failed.")
                 return
 
-        # Prepare payload
         model_version = params.get('model', 'MODEL_FOUR_NANO_BANANA_PRO')
         payload = {
             "prompt": params.get('prompt', ''),
@@ -200,7 +213,6 @@ def process_image_task(task_id, params):
             "modelVersion": model_version
         }
         
-        # Only add resolution if model is Nano Banana PRO
         if model_version == 'MODEL_FOUR_NANO_BANANA_PRO':
             payload["resolution"] = params.get('resolution', '2K')
             
@@ -216,14 +228,12 @@ def process_image_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Remove account from file
         remove_account_from_disk(account['email'])
 
-        api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
+        api_task_id = str(resp_json['data']['data']['taskId'])
         STATE['tasks'][task_id]['logs'].append(f"API Task ID: {api_task_id}")
 
-        # Polling
-        for _ in range(300): # 10 mins timeout
+        for _ in range(300):
             time.sleep(2)
             try:
                 poll = requests.get(URL_ASSETS, headers=headers).json()
@@ -292,13 +302,11 @@ def process_video_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Remove account from file and memory
         remove_account_from_disk(account['email'])
 
-        api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
+        api_task_id = str(resp_json['data']['data']['taskId'])
         
-        # Polling
-        for _ in range(600): # 20 mins timeout
+        for _ in range(600):
             time.sleep(5)
             try:
                 poll = requests.get(URL_VIDEO_TASKS, headers=headers).json()
@@ -325,10 +333,76 @@ def process_video_task(task_id, params):
         STATE['tasks'][task_id]['status'] = 'error'
         STATE['tasks'][task_id]['logs'].append(str(e))
 
+def process_tts_task(task_id, params):
+    """Worker for ElevenLabs TTS generation."""
+    STATE['tasks'][task_id]['status'] = 'running'
+    try:
+        if not ELEVENLABS_API_KEY:
+            STATE['tasks'][task_id]['status'] = 'failed'
+            STATE['tasks'][task_id]['logs'].append("ElevenLabs API key not configured.")
+            return
+
+        voice_id = params.get('voice_id', 'EXAVITQu4vr4xnSDxMaL')  # Default: Bella
+        text = params.get('text', '')
+        
+        if not text:
+            STATE['tasks'][task_id]['status'] = 'failed'
+            STATE['tasks'][task_id]['logs'].append("Text is required.")
+            return
+
+        # Voice settings
+        stability = params.get('stability', 0.5)
+        similarity_boost = params.get('similarity_boost', 0.75)
+        style = params.get('style', 0.0)
+        speed = params.get('speed', 1.0)
+        
+        url = f"{ELEVENLABS_TTS_URL}/{voice_id}"
+        
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": ELEVENLABS_API_KEY
+        }
+        
+        payload = {
+            "text": text,
+            "model_id": params.get('model_id', 'eleven_multilingual_v2'),
+            "voice_settings": {
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "style": style,
+                "use_speaker_boost": params.get('use_speaker_boost', True)
+            }
+        }
+        
+        if speed != 1.0:
+            payload["voice_settings"]["speed"] = speed
+
+        STATE['tasks'][task_id]['logs'].append(f"Generating TTS with voice: {voice_id}")
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        
+        if response.status_code == 200:
+            audio_base64 = base64.b64encode(response.content).decode('utf-8')
+            
+            STATE['tasks'][task_id]['status'] = 'completed'
+            STATE['tasks'][task_id]['result_url'] = f"data:audio/mpeg;base64,{audio_base64}"
+            STATE['tasks'][task_id]['logs'].append("TTS generation successful.")
+        else:
+            STATE['tasks'][task_id]['status'] = 'failed'
+            STATE['tasks'][task_id]['logs'].append(f"ElevenLabs API error: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        STATE['tasks'][task_id]['status'] = 'error'
+        STATE['tasks'][task_id]['logs'].append(str(e))
+
 # --- API Routes ---
 
 @app.route('/api/generate/image', methods=['POST'])
 def generate_image():
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
     data = request.json
     if not data or 'prompt' not in data:
         return jsonify({"error": "Prompt required"}), 400
@@ -346,6 +420,9 @@ def generate_image():
 
 @app.route('/api/generate/video', methods=['POST'])
 def generate_video():
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
     data = request.json
     if not data or 'prompt' not in data:
         return jsonify({"error": "Prompt required"}), 400
@@ -361,19 +438,98 @@ def generate_video():
     threading.Thread(target=process_video_task, args=(task_id, data)).start()
     return jsonify({"task_id": task_id})
 
+@app.route('/api/generate/tts', methods=['POST'])
+def generate_tts():
+    """
+    ElevenLabs Text-to-Speech endpoint
+    
+    Required:
+    - text: Metni ses dosyasına çevirir
+    
+    Optional:
+    - voice_id: Ses ID'si (default: 'EXAVITQu4vr4xnSDxMaL' - Bella)
+    - speed: Ses hızı (0.25 - 4.0, default: 1.0)
+    - stability: Ses stabilitesi (0.0 - 1.0, default: 0.5)
+    - similarity_boost: Benzerlik artırma (0.0 - 1.0, default: 0.75)
+    - style: Ses stili (0.0 - 1.0, default: 0.0)
+    - model_id: Model ID (default: 'eleven_multilingual_v2')
+    - use_speaker_boost: Konuşmacı güçlendirme (default: True)
+    """
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.json
+    if not data or 'text' not in data:
+        return jsonify({"error": "Text required"}), 400
+    
+    if not ELEVENLABS_API_KEY:
+        return jsonify({"error": "ElevenLabs API key not configured"}), 500
+    
+    task_id = str(uuid.uuid4())
+    STATE['tasks'][task_id] = {
+        'status': 'pending', 'result_url': None, 'logs': [], 'mode': 'tts'
+    }
+    
+    threading.Thread(target=process_tts_task, args=(task_id, data)).start()
+    return jsonify({"task_id": task_id})
+
+@app.route('/api/elevenlabs/voices', methods=['GET'])
+def get_elevenlabs_voices():
+    """ElevenLabs'daki mevcut sesleri listeler"""
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    if not ELEVENLABS_API_KEY:
+        return jsonify({"error": "ElevenLabs API key not configured"}), 500
+    
+    try:
+        headers = {"xi-api-key": ELEVENLABS_API_KEY}
+        response = requests.get(ELEVENLABS_VOICES_URL, headers=headers)
+        
+        if response.status_code == 200:
+            voices_data = response.json()
+            simplified_voices = [
+                {
+                    "name": voice.get("name"),
+                    "voice_id": voice.get("voice_id")
+                }
+                for voice in voices_data.get("voices", [])
+            ]
+            return jsonify({"voices": simplified_voices})
+        else:
+            return jsonify({"error": f"Failed to fetch voices: {response.text}"}), response.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/status/<task_id>', methods=['GET'])
 def get_task_status(task_id):
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
     task = STATE['tasks'].get(task_id)
     if not task:
         return jsonify({"error": "Task not found"}), 404
     return jsonify(task)
 
-@app.route('/api/debug/accounts', methods=['GET'])
-def debug_accounts():
+@app.route('/api/status', methods=['GET'])
+def get_all_tasks_status():
+    """Returns all tasks with their current status"""
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    return jsonify({"tasks": STATE['tasks']})
+
+@app.route('/api/quota', methods=['GET'])
+def get_quota():
+    if not verify_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+    
     return jsonify({
-        "loaded_count": len(STATE['accounts'])
+        "quota": len(STATE['accounts'])
     })
 
 if __name__ == '__main__':
+    STATE['accounts'] = load_accounts()
     print(f"Loaded {len(STATE['accounts'])} accounts.")
+    print(f"Server API Key: {SERVER_API_KEY}")
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
