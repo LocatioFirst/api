@@ -42,32 +42,22 @@ lock = threading.Lock()
 # --- Helper Functions ---
 
 def load_accounts():
-    """Loads accounts from hardcoded list."""
-    accs = [
-        {'email': 'mqix9v7v53bjc82@spamok.com', 'password': 'windows700'},
-        {'email': 'v0oo59qdcd1atml@spamok.com', 'password': 'windows700'},
-        {'email': '372z6yqtv6ou4k2@spamok.com', 'password': 'windows700'},
-        {'email': 'nkhelrx442imqp4@spamok.com', 'password': 'windows700'},
-        {'email': '6sfjxbgiz3jvq1t@spamok.com', 'password': 'windows700'},
-        {'email': '5juy0vkjr9kn9iv@spamok.com', 'password': 'windows700'},
-        {'email': 'fm6ic3ozbspl3fb@spamok.com', 'password': 'windows700'},
-        {'email': '5b05bkynafvto6k@spamok.com', 'password': 'windows700'},
-        {'email': '1giona6l8colq4k@spamok.com', 'password': 'windows700'},
-        {'email': '63fnko3neyobf0w@spamok.com', 'password': 'windows700'},
-        {'email': '86m12843kd54rip@spamok.com', 'password': 'windows700'},
-        {'email': 'un8wxezpzii6ja1@spamok.com', 'password': 'windows700'},
-        {'email': 'jgovnzx8co3biti@spamok.com', 'password': 'windows700'},
-        {'email': '8722cin3p7i5owa@spamok.com', 'password': 'windows700'},
-        {'email': 'vrqsuvol263wc23@spamok.com', 'password': 'windows700'},
-        {'email': 'qcbyqnucvv9957h@spamok.com', 'password': 'windows700'},
-        {'email': 'gj4nm3lbuztjw47@spamok.com', 'password': 'windows700'},
-        {'email': 'mm054a55odwlfk5@spamok.com', 'password': 'windows700'},
-        {'email': '5iw2uoni28ikumq@spamok.com', 'password': 'windows700'},
-        {'email': 'hsdkgm97d7brynv@spamok.com', 'password': 'windows700'},
-        {'email': 'x3rodjkjz4pihfu@spamok.com', 'password': 'windows700'},
-        {'email': '6o0w57u9r4rrahf@spamok.com', 'password': 'windows700'},
-        {'email': '440ravi1w7b8dmx@spamok.com', 'password': 'windows700'}
-    ]
+    """Loads accounts from accounts.txt."""
+    if not os.path.exists(ACCOUNTS_FILE):
+        return []
+    accs = []
+    try:
+        with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and ':' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        email = parts[0].strip()
+                        pw = parts[1].strip()
+                        accs.append({'email': email, 'password': pw})
+    except Exception as e:
+        print(f"Error loading accounts: {e}")
     return accs
 
 STATE['accounts'] = load_accounts()
@@ -87,16 +77,14 @@ def remove_account_from_disk(email):
         print(f"Error removing account from file: {e}")
 
 def get_next_account():
-    """Gets next account in rotation and moves it to end of list (döngüsel kullanım)."""
+    """Gets the first available account and removes it from the pool (locking)."""
     global STATE
     with lock:
         if not STATE['accounts']:
             return None
-        # İlk hesabı al
-        account = STATE['accounts'].pop(0)
-        # Sona ekle (böylece hesaplar sürekli döngüde kalır)
-        STATE['accounts'].append(account)
-        return account
+        # pop(0) ensures sequential processing (first in, first out)
+        # and "locking" because it's no longer in the available pool.
+        return STATE['accounts'].pop(0)
 
 def refresh_quota(token):
     """Optional but might be required to activate session."""
@@ -228,8 +216,8 @@ def process_image_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Remove account from file (artık döngüde olduğu için diskten silmeye gerek yok)
-        # remove_account_from_disk(account['email'])
+        # SUCCESS: Remove account from file
+        remove_account_from_disk(account['email'])
 
         api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
         STATE['tasks'][task_id]['logs'].append(f"API Task ID: {api_task_id}")
@@ -304,8 +292,8 @@ def process_video_task(task_id, params):
             STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
             return
 
-        # SUCCESS: Hesap döngüde olduğu için silmeye gerek yok
-        # remove_account(account['email'])
+        # SUCCESS: Remove account from file and memory
+        remove_account_from_disk(account['email'])
 
         api_task_id = str(resp_json['data']['data']['taskId']) # Store as string
         
