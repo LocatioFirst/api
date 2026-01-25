@@ -70,6 +70,8 @@ def load_accounts():
     ]
     return accs
 
+STATE['accounts'] = load_accounts()
+
 def remove_account_from_disk(email):
     """Removes an account from disk only."""
     try:
@@ -385,6 +387,5 @@ def debug_accounts():
     })
 
 if __name__ == '__main__':
-    STATE['accounts'] = load_accounts()
     print(f"Loaded {len(STATE['accounts'])} accounts.")
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
