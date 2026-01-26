@@ -16,6 +16,9 @@ ACCOUNTS_FILE = 'accounts.txt'
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
 SERVER_API_KEY = "sk_live_7f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
 
+# Maximum concurrent tasks
+MAX_CONCURRENT_TASKS = 10
+
 # Deevid URLs
 URL_AUTH = "https://sp.deevid.ai/auth/v1/token?grant_type=password"
 URL_UPLOAD = "https://api.deevid.ai/file-upload/image"
@@ -42,7 +45,8 @@ DEVICE_HEADERS = {
 # --- Global State ---
 STATE = {
     "accounts": [],
-    "tasks": {}  # task_id -> {status, result_url, logs, mode}
+    "tasks": {},  # task_id -> {status, result_url, logs, mode}
+    "running_tasks": 0  # Counter for currently running tasks
 }
 lock = threading.Lock()
 
@@ -102,6 +106,23 @@ def get_next_account():
         if not STATE['accounts']:
             return None
         return STATE['accounts'].pop(0)
+
+def can_start_new_task():
+    """Checks if a new task can be started (max concurrent limit)."""
+    with lock:
+        return STATE['running_tasks'] < MAX_CONCURRENT_TASKS
+
+def increment_running_tasks():
+    """Increments the running tasks counter."""
+    with lock:
+        STATE['running_tasks'] += 1
+        print(f"Task started. Running tasks: {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS}")
+
+def decrement_running_tasks():
+    """Decrements the running tasks counter."""
+    with lock:
+        STATE['running_tasks'] = max(0, STATE['running_tasks'] - 1)
+        print(f"Task finished. Running tasks: {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS}")
 
 def refresh_quota(token):
     """Optional but might be required to activate session."""
@@ -183,218 +204,230 @@ def upload_image(token, image_bytes):
 
 def process_image_task(task_id, params):
     """Worker for image generation."""
-    STATE['tasks'][task_id]['status'] = 'running'
+    increment_running_tasks()
     try:
-        token, account = login_with_retry()
-        if not token:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append("All accounts failed to login.")
-            return
-
-        headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
-        
-        user_image_ids = []
-        if params.get('image'):
-            img_data = base64.b64decode(params['image'])
-            img_id = upload_image(token, img_data)
-            if img_id:
-                user_image_ids.append(img_id)
-            else:
+        STATE['tasks'][task_id]['status'] = 'running'
+        try:
+            token, account = login_with_retry()
+            if not token:
                 STATE['tasks'][task_id]['status'] = 'failed'
-                STATE['tasks'][task_id]['logs'].append("Image upload failed.")
+                STATE['tasks'][task_id]['logs'].append("All accounts failed to login.")
                 return
 
-        model_version = params.get('model', 'MODEL_FOUR_NANO_BANANA_PRO')
-        payload = {
-            "prompt": params.get('prompt', ''),
-            "imageSize": params.get('imageSize', 'SIXTEEN_BY_NINE'),
-            "count": 1,
-            "modelType": "MODEL_FOUR",
-            "modelVersion": model_version
-        }
-        
-        if model_version == 'MODEL_FOUR_NANO_BANANA_PRO':
-            payload["resolution"] = params.get('resolution', '2K')
+            headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
             
-        if user_image_ids:
-            payload["userImageIds"] = user_image_ids
+            user_image_ids = []
+            if params.get('image'):
+                img_data = base64.b64decode(params['image'])
+                img_id = upload_image(token, img_data)
+                if img_id:
+                    user_image_ids.append(img_id)
+                else:
+                    STATE['tasks'][task_id]['status'] = 'failed'
+                    STATE['tasks'][task_id]['logs'].append("Image upload failed.")
+                    return
 
-        resp = requests.post(URL_SUBMIT_IMG, headers=headers, json=payload)
-        resp_json = resp.json()
-        
-        error = resp_json.get('error')
-        if error and error.get('code') != 0:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
-            return
+            model_version = params.get('model', 'MODEL_FOUR_NANO_BANANA_PRO')
+            payload = {
+                "prompt": params.get('prompt', ''),
+                "imageSize": params.get('imageSize', 'SIXTEEN_BY_NINE'),
+                "count": 1,
+                "modelType": "MODEL_FOUR",
+                "modelVersion": model_version
+            }
+            
+            if model_version == 'MODEL_FOUR_NANO_BANANA_PRO':
+                payload["resolution"] = params.get('resolution', '2K')
+                
+            if user_image_ids:
+                payload["userImageIds"] = user_image_ids
 
-        remove_account_from_disk(account['email'])
+            resp = requests.post(URL_SUBMIT_IMG, headers=headers, json=payload)
+            resp_json = resp.json()
+            
+            error = resp_json.get('error')
+            if error and error.get('code') != 0:
+                STATE['tasks'][task_id]['status'] = 'failed'
+                STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
+                return
 
-        api_task_id = str(resp_json['data']['data']['taskId'])
-        STATE['tasks'][task_id]['logs'].append(f"API Task ID: {api_task_id}")
+            remove_account_from_disk(account['email'])
 
-        for _ in range(300):
-            time.sleep(2)
-            try:
-                poll = requests.get(URL_ASSETS, headers=headers).json()
-                groups = poll.get('data', {}).get('data', {}).get('groups', [])
-                for group in groups:
-                    for item in group.get('items', []):
-                        creation = item.get('detail', {}).get('creation', {})
-                        if str(creation.get('taskId')) == api_task_id:
-                            if creation.get('taskState') == 'SUCCESS':
-                                urls = creation.get('noWaterMarkImageUrl', [])
-                                if urls:
-                                    STATE['tasks'][task_id]['status'] = 'completed'
-                                    STATE['tasks'][task_id]['result_url'] = urls[0]
+            api_task_id = str(resp_json['data']['data']['taskId'])
+            STATE['tasks'][task_id]['logs'].append(f"API Task ID: {api_task_id}")
+
+            for _ in range(300):
+                time.sleep(2)
+                try:
+                    poll = requests.get(URL_ASSETS, headers=headers).json()
+                    groups = poll.get('data', {}).get('data', {}).get('groups', [])
+                    for group in groups:
+                        for item in group.get('items', []):
+                            creation = item.get('detail', {}).get('creation', {})
+                            if str(creation.get('taskId')) == api_task_id:
+                                if creation.get('taskState') == 'SUCCESS':
+                                    urls = creation.get('noWaterMarkImageUrl', [])
+                                    if urls:
+                                        STATE['tasks'][task_id]['status'] = 'completed'
+                                        STATE['tasks'][task_id]['result_url'] = urls[0]
+                                        return
+                                elif creation.get('taskState') == 'FAIL':
+                                    STATE['tasks'][task_id]['status'] = 'failed'
                                     return
-                            elif creation.get('taskState') == 'FAIL':
-                                STATE['tasks'][task_id]['status'] = 'failed'
-                                return
-            except:
-                pass
-        STATE['tasks'][task_id]['status'] = 'timeout'
-    except Exception as e:
-        STATE['tasks'][task_id]['status'] = 'error'
-        STATE['tasks'][task_id]['logs'].append(str(e))
+                except:
+                    pass
+            STATE['tasks'][task_id]['status'] = 'timeout'
+        except Exception as e:
+            STATE['tasks'][task_id]['status'] = 'error'
+            STATE['tasks'][task_id]['logs'].append(str(e))
+    finally:
+        decrement_running_tasks()
 
 def process_video_task(task_id, params):
     """Worker for video generation."""
-    STATE['tasks'][task_id]['status'] = 'running'
+    increment_running_tasks()
     try:
-        token, account = login_with_retry()
-        if not token:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            return
-
-        headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
-        
-        is_i2v = params.get('image') is not None
-        payload = {
-            "prompt": params.get('prompt', ''),
-            "resolution": "720p",
-            "lengthOfSecond": int(params.get('duration', 10)),
-            "aiPromptEnhance": True,
-            "size": params.get('size', 'SIXTEEN_BY_NINE'),
-            "addEndFrame": False
-        }
-
-        if is_i2v:
-            img_data = base64.b64decode(params['image'])
-            img_id = upload_image(token, img_data)
-            if not img_id:
+        STATE['tasks'][task_id]['status'] = 'running'
+        try:
+            token, account = login_with_retry()
+            if not token:
                 STATE['tasks'][task_id]['status'] = 'failed'
                 return
-            payload["userImageId"] = int(str(img_id).strip())
-            payload["modelVersion"] = "MODEL_ELEVEN_IMAGE_TO_VIDEO_V2"
-            url_submit = URL_SUBMIT_VIDEO
-        else:
-            payload["modelType"] = "MODEL_ELEVEN"
-            payload["modelVersion"] = "MODEL_ELEVEN_TEXT_TO_VIDEO_V2"
-            url_submit = URL_SUBMIT_TXT_VIDEO
 
-        resp = requests.post(url_submit, headers=headers, json=payload)
-        resp_json = resp.json()
-        
-        error = resp_json.get('error')
-        if error and error.get('code') != 0:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
-            return
+            headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
+            
+            is_i2v = params.get('image') is not None
+            payload = {
+                "prompt": params.get('prompt', ''),
+                "resolution": "720p",
+                "lengthOfSecond": 10,
+                "aiPromptEnhance": True,
+                "size": params.get('size', 'SIXTEEN_BY_NINE'),
+                "addEndFrame": False
+            }
 
-        remove_account_from_disk(account['email'])
+            if is_i2v:
+                img_data = base64.b64decode(params['image'])
+                img_id = upload_image(token, img_data)
+                if not img_id:
+                    STATE['tasks'][task_id]['status'] = 'failed'
+                    return
+                payload["userImageId"] = int(str(img_id).strip())
+                payload["modelVersion"] = "MODEL_ELEVEN_IMAGE_TO_VIDEO_V2"
+                url_submit = URL_SUBMIT_VIDEO
+            else:
+                payload["modelType"] = "MODEL_ELEVEN"
+                payload["modelVersion"] = "MODEL_ELEVEN_TEXT_TO_VIDEO_V2"
+                url_submit = URL_SUBMIT_TXT_VIDEO
 
-        api_task_id = str(resp_json['data']['data']['taskId'])
-        
-        for _ in range(600):
-            time.sleep(5)
-            try:
-                poll = requests.get(URL_VIDEO_TASKS, headers=headers).json()
-                video_list = poll.get('data', {}).get('data', {}).get('data', [])
-                if not video_list and isinstance(poll.get('data', {}).get('data'), list):
-                    video_list = poll['data']['data']
-                    
-                for v in video_list:
-                    if str(v.get('taskId')) == api_task_id:
-                        if v.get('taskState') == 'SUCCESS':
-                            url = v.get('noWaterMarkVideoUrl') or v.get('noWatermarkVideoUrl')
-                            if isinstance(url, list) and url: url = url[0]
-                            if url:
-                                STATE['tasks'][task_id]['status'] = 'completed'
-                                STATE['tasks'][task_id]['result_url'] = url
+            resp = requests.post(url_submit, headers=headers, json=payload)
+            resp_json = resp.json()
+            
+            error = resp_json.get('error')
+            if error and error.get('code') != 0:
+                STATE['tasks'][task_id]['status'] = 'failed'
+                STATE['tasks'][task_id]['logs'].append(f"Submit error: {resp_json}")
+                return
+
+            remove_account_from_disk(account['email'])
+
+            api_task_id = str(resp_json['data']['data']['taskId'])
+            
+            for _ in range(600):
+                time.sleep(5)
+                try:
+                    poll = requests.get(URL_VIDEO_TASKS, headers=headers).json()
+                    video_list = poll.get('data', {}).get('data', {}).get('data', [])
+                    if not video_list and isinstance(poll.get('data', {}).get('data'), list):
+                        video_list = poll['data']['data']
+                        
+                    for v in video_list:
+                        if str(v.get('taskId')) == api_task_id:
+                            if v.get('taskState') == 'SUCCESS':
+                                url = v.get('noWaterMarkVideoUrl') or v.get('noWatermarkVideoUrl')
+                                if isinstance(url, list) and url: url = url[0]
+                                if url:
+                                    STATE['tasks'][task_id]['status'] = 'completed'
+                                    STATE['tasks'][task_id]['result_url'] = url
+                                    return
+                            elif v.get('taskState') == 'FAIL':
+                                STATE['tasks'][task_id]['status'] = 'failed'
                                 return
-                        elif v.get('taskState') == 'FAIL':
-                            STATE['tasks'][task_id]['status'] = 'failed'
-                            return
-            except:
-                pass
-        STATE['tasks'][task_id]['status'] = 'timeout'
-    except Exception as e:
-        STATE['tasks'][task_id]['status'] = 'error'
-        STATE['tasks'][task_id]['logs'].append(str(e))
+                except:
+                    pass
+            STATE['tasks'][task_id]['status'] = 'timeout'
+        except Exception as e:
+            STATE['tasks'][task_id]['status'] = 'error'
+            STATE['tasks'][task_id]['logs'].append(str(e))
+    finally:
+        decrement_running_tasks()
 
 def process_tts_task(task_id, params):
     """Worker for ElevenLabs TTS generation."""
-    STATE['tasks'][task_id]['status'] = 'running'
+    increment_running_tasks()
     try:
-        if not ELEVENLABS_API_KEY:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append("ElevenLabs API key not configured.")
-            return
+        STATE['tasks'][task_id]['status'] = 'running'
+        try:
+            if not ELEVENLABS_API_KEY:
+                STATE['tasks'][task_id]['status'] = 'failed'
+                STATE['tasks'][task_id]['logs'].append("ElevenLabs API key not configured.")
+                return
 
-        voice_id = params.get('voice_id', 'EXAVITQu4vr4xnSDxMaL')  # Default: Bella
-        text = params.get('text', '')
-        
-        if not text:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append("Text is required.")
-            return
+            voice_id = params.get('voice_id', 'EXAVITQu4vr4xnSDxMaL')  # Default: Bella
+            text = params.get('text', '')
+            
+            if not text:
+                STATE['tasks'][task_id]['status'] = 'failed'
+                STATE['tasks'][task_id]['logs'].append("Text is required.")
+                return
 
-        # Voice settings
-        stability = params.get('stability', 0.5)
-        similarity_boost = params.get('similarity_boost', 0.75)
-        style = params.get('style', 0.0)
-        speed = params.get('speed', 1.0)
-        
-        url = f"{ELEVENLABS_TTS_URL}/{voice_id}"
-        
-        headers = {
-            "Accept": "audio/mpeg",
-            "Content-Type": "application/json",
-            "xi-api-key": ELEVENLABS_API_KEY
-        }
-        
-        payload = {
-            "text": text,
-            "model_id": params.get('model_id', 'eleven_multilingual_v2'),
-            "voice_settings": {
-                "stability": stability,
-                "similarity_boost": similarity_boost,
-                "style": style,
-                "use_speaker_boost": params.get('use_speaker_boost', True)
+            # Voice settings
+            stability = params.get('stability', 0.5)
+            similarity_boost = params.get('similarity_boost', 0.75)
+            style = params.get('style', 0.0)
+            speed = params.get('speed', 1.0)
+            
+            url = f"{ELEVENLABS_TTS_URL}/{voice_id}"
+            
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": ELEVENLABS_API_KEY
             }
-        }
-        
-        if speed != 1.0:
-            payload["voice_settings"]["speed"] = speed
+            
+            payload = {
+                "text": text,
+                "model_id": params.get('model_id', 'eleven_multilingual_v2'),
+                "voice_settings": {
+                    "stability": stability,
+                    "similarity_boost": similarity_boost,
+                    "style": style,
+                    "use_speaker_boost": params.get('use_speaker_boost', True)
+                }
+            }
+            
+            if speed != 1.0:
+                payload["voice_settings"]["speed"] = speed
 
-        STATE['tasks'][task_id]['logs'].append(f"Generating TTS with voice: {voice_id}")
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        
-        if response.status_code == 200:
-            audio_base64 = base64.b64encode(response.content).decode('utf-8')
+            STATE['tasks'][task_id]['logs'].append(f"Generating TTS with voice: {voice_id}")
             
-            STATE['tasks'][task_id]['status'] = 'completed'
-            STATE['tasks'][task_id]['result_url'] = f"data:audio/mpeg;base64,{audio_base64}"
-            STATE['tasks'][task_id]['logs'].append("TTS generation successful.")
-        else:
-            STATE['tasks'][task_id]['status'] = 'failed'
-            STATE['tasks'][task_id]['logs'].append(f"ElevenLabs API error: {response.status_code} - {response.text}")
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
             
-    except Exception as e:
-        STATE['tasks'][task_id]['status'] = 'error'
-        STATE['tasks'][task_id]['logs'].append(str(e))
+            if response.status_code == 200:
+                audio_base64 = base64.b64encode(response.content).decode('utf-8')
+                
+                STATE['tasks'][task_id]['status'] = 'completed'
+                STATE['tasks'][task_id]['result_url'] = f"data:audio/mpeg;base64,{audio_base64}"
+                STATE['tasks'][task_id]['logs'].append("TTS generation successful.")
+            else:
+                STATE['tasks'][task_id]['status'] = 'failed'
+                STATE['tasks'][task_id]['logs'].append(f"ElevenLabs API error: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            STATE['tasks'][task_id]['status'] = 'error'
+            STATE['tasks'][task_id]['logs'].append(str(e))
+    finally:
+        decrement_running_tasks()
 
 # --- API Routes ---
 
@@ -409,6 +442,12 @@ def generate_image():
     
     if not STATE['accounts']:
         return jsonify({"error": "No accounts available"}), 503
+    
+    if not can_start_new_task():
+        return jsonify({
+            "error": "Maximum concurrent tasks reached",
+            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+        }), 429
     
     task_id = str(uuid.uuid4())
     STATE['tasks'][task_id] = {
@@ -429,6 +468,12 @@ def generate_video():
     
     if not STATE['accounts']:
         return jsonify({"error": "No accounts available"}), 503
+    
+    if not can_start_new_task():
+        return jsonify({
+            "error": "Maximum concurrent tasks reached",
+            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+        }), 429
     
     task_id = str(uuid.uuid4())
     STATE['tasks'][task_id] = {
@@ -464,6 +509,12 @@ def generate_tts():
     
     if not ELEVENLABS_API_KEY:
         return jsonify({"error": "ElevenLabs API key not configured"}), 500
+    
+    if not can_start_new_task():
+        return jsonify({
+            "error": "Maximum concurrent tasks reached",
+            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+        }), 429
     
     task_id = str(uuid.uuid4())
     STATE['tasks'][task_id] = {
@@ -517,7 +568,11 @@ def get_all_tasks_status():
     if not verify_api_key():
         return jsonify({"error": "Unauthorized"}), 401
     
-    return jsonify({"tasks": STATE['tasks']})
+    return jsonify({
+        "tasks": STATE['tasks'],
+        "running_tasks": STATE['running_tasks'],
+        "max_concurrent": MAX_CONCURRENT_TASKS
+    })
 
 @app.route('/api/quota', methods=['GET'])
 def get_quota():
@@ -525,11 +580,15 @@ def get_quota():
         return jsonify({"error": "Unauthorized"}), 401
     
     return jsonify({
-        "quota": len(STATE['accounts'])
+        "quota": len(STATE['accounts']),
+        "running_tasks": STATE['running_tasks'],
+        "max_concurrent": MAX_CONCURRENT_TASKS,
+        "available_slots": MAX_CONCURRENT_TASKS - STATE['running_tasks']
     })
 
 if __name__ == '__main__':
     STATE['accounts'] = load_accounts()
     print(f"Loaded {len(STATE['accounts'])} accounts.")
     print(f"Server API Key: {SERVER_API_KEY}")
+    print(f"Maximum concurrent tasks: {MAX_CONCURRENT_TASKS}")
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
