@@ -82,6 +82,8 @@ def load_accounts():
     ]
     return accs
 
+STATE['accounts'] = load_accounts()
+
 def remove_account_from_disk(email):
     """Removes an account from disk only."""
     try:
@@ -584,7 +586,6 @@ def get_quota():
     })
 
 if __name__ == '__main__':
-    STATE['accounts'] = load_accounts()
     print(f"Loaded {len(STATE['accounts'])} accounts.")
     print(f"Server API Key: {SERVER_API_KEY}")
     print(f"Maximum concurrent tasks: {MAX_CONCURRENT_TASKS}")
