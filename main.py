@@ -67,22 +67,19 @@ def verify_api_key():
     return provided_key == SERVER_API_KEY
 
 def load_accounts():
-    """Loads accounts from accounts.txt."""
-    if not os.path.exists(ACCOUNTS_FILE):
-        return []
-    accs = []
-    try:
-        with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and ':' in line:
-                    parts = line.split(':')
-                    if len(parts) >= 2:
-                        email = parts[0].strip()
-                        pw = parts[1].strip()
-                        accs.append({'email': email, 'password': pw})
-    except Exception as e:
-        print(f"Error loading accounts: {e}")
+    accs = [
+      {"email": "ydrwfkebyr8wh6w@spamok.com", "password": "windows700"},
+      {"email": "i6phpspls1j68s6@spamok.com", "password": "windows700"},
+      {"email": "r1prmo6g6kh1w2d@spamok.com", "password": "windows700"},
+      {"email": "ss39jlzuaxica2m@spamok.com", "password": "windows700"},
+      {"email": "mj6o64opzjj2oaw@spamok.com", "password": "windows700"},
+      {"email": "mwegijjx2m1jni2@spamok.com", "password": "windows700"},
+      {"email": "2covt02kuq5p3m2@spamok.com", "password": "windows700"},
+      {"email": "n0uaao5lnrvmvye@spamok.com", "password": "windows700"},
+      {"email": "k2wlinayf1u81g7@spamok.com", "password": "windows700"},
+      {"email": "p46fn6y0g53s3vv@spamok.com", "password": "windows700"},
+      {"email": "tzvaga03xe84i60@spamok.com", "password": "windows700"}
+    ]
     return accs
 
 def remove_account_from_disk(email):
