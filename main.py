@@ -14,7 +14,7 @@ app = Flask(__name__)
 # --- Configuration & Constants ---
 ACCOUNTS_FILE = 'accounts.txt'
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
-SERVER_API_KEY = "sk_live_7f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
+SERVER_API_KEY = "sk_live_8f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
 
 # Maximum concurrent tasks
 MAX_CONCURRENT_TASKS = 10
@@ -67,19 +67,22 @@ def verify_api_key():
     return provided_key == SERVER_API_KEY
 
 def load_accounts():
-    accs = [
-      {"email": "ydrwfkebyr8wh6w@spamok.com", "password": "windows700"},
-      {"email": "i6phpspls1j68s6@spamok.com", "password": "windows700"},
-      {"email": "r1prmo6g6kh1w2d@spamok.com", "password": "windows700"},
-      {"email": "ss39jlzuaxica2m@spamok.com", "password": "windows700"},
-      {"email": "mj6o64opzjj2oaw@spamok.com", "password": "windows700"},
-      {"email": "mwegijjx2m1jni2@spamok.com", "password": "windows700"},
-      {"email": "2covt02kuq5p3m2@spamok.com", "password": "windows700"},
-      {"email": "n0uaao5lnrvmvye@spamok.com", "password": "windows700"},
-      {"email": "k2wlinayf1u81g7@spamok.com", "password": "windows700"},
-      {"email": "p46fn6y0g53s3vv@spamok.com", "password": "windows700"},
-      {"email": "tzvaga03xe84i60@spamok.com", "password": "windows700"}
-    ]
+    """Loads accounts from accounts.txt."""
+    if not os.path.exists(ACCOUNTS_FILE):
+        return []
+    accs = []
+    try:
+        with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and ':' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        email = parts[0].strip()
+                        pw = parts[1].strip()
+                        accs.append({'email': email, 'password': pw})
+    except Exception as e:
+        print(f"Error loading accounts: {e}")
     return accs
 
 STATE['accounts'] = load_accounts()
