@@ -14,7 +14,7 @@ app = Flask(__name__)
 # --- Configuration & Constants ---
 ACCOUNTS_FILE = 'accounts.txt'
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
-SERVER_API_KEY = "sk_live_8f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
+SERVER_API_KEY = "sk_live_9f9a2b4e6c8d1a3f5e9b7c2d4a6f8e1b3c5d7f9a2b4e6c8d1a3f5e9b7c2d4a6f"
 
 # Maximum concurrent tasks
 MAX_CONCURRENT_TASKS = 10
