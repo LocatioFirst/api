@@ -3,3 +3,4 @@ gunicorn
 curl_cffi
 requests
 Pillow
+psycopg2-binary
