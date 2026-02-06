@@ -358,7 +358,7 @@ def login_with_retry(api_key):
         }
         try:
             resp = requests.post(URL_AUTH, json=payload, headers=headers, timeout=10)
-            if resp.status_code == 200:
+            if resp.status_code in [200, 201]:
                 token = resp.json().get('access_token')
                 if token:
                     refresh_quota(token)
@@ -433,7 +433,7 @@ def wait_for_completion(token, deevid_task_id, logs):
     for i in range(max_attempts):
         try:
             resp = requests.get(URL_ASSETS, headers=headers)
-            if resp.status_code == 200:
+            if resp.status_code in [200, 201]:
                 assets = resp.json()
                 for asset in assets:
                     if asset.get('taskId') == deevid_task_id:
@@ -603,7 +603,7 @@ def process_tts_task(task_id, data, api_key):
         
         response = requests.post(url, json=payload, headers=headers, timeout=60)
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:
             audio_base64 = base64.b64encode(response.content).decode('utf-8')
             
             task_data['status'] = 'completed'
@@ -713,7 +713,7 @@ def get_elevenlabs_voices():
         headers = {"xi-api-key": ELEVENLABS_API_KEY}
         response = requests.get(ELEVENLABS_VOICES_URL, headers=headers)
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:
             voices_data = response.json()
             simplified_voices = [
                 {
