@@ -21,7 +21,7 @@ API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJp
 MAX_CONCURRENT_TASKS = 10
 
 # PostgreSQL Database URL
-DATABASE_URL = "postgresql://db_ztvp_user:2GTqbMWIXYs6uMlbMytfUrxEhrMTb83I@dpg-d62upkhr0fns73dpmu60-a/db_ztvp"
+DATABASE_URL = "postgresql://db_ztvp_user:2GTqbMWIXYs6uMlbMytfUrxEhrMTb83I@dpg-d62upkhr0fns73dpmu60-a.virginia-postgres.render.com/db_ztvp"
 
 # Deevid URLs
 URL_AUTH = "https://sp.deevid.ai/auth/v1/token?grant_type=password"
@@ -388,7 +388,7 @@ def upload_image(token, image_bytes, logs):
     headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
     files = {'file': ('image.png', BytesIO(resized), 'image/png')}
     resp = requests.post(URL_UPLOAD, files=files, headers=headers)
-    if resp.status_code != 200:
+    if resp.status_code not in [200, 201]:
         logs.append(f"Upload failed: {resp.status_code}")
         raise Exception("Image upload failed.")
     asset_url = resp.json().get('assetUrl')
@@ -401,7 +401,7 @@ def submit_text_to_image(token, prompt, aspect_ratio, logs):
     headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
     payload = {"prompt": prompt, "aspectRatio": aspect_ratio}
     resp = requests.post(URL_SUBMIT_IMG, json=payload, headers=headers)
-    if resp.status_code != 200:
+    if resp.status_code not in [200, 201]:
         logs.append(f"Submit image failed: {resp.status_code}")
         raise Exception("Text-to-image submit failed.")
     return resp.json().get('taskId')
@@ -411,7 +411,7 @@ def submit_image_to_video(token, image_url, prompt, logs):
     headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
     payload = {"imageUrl": image_url, "prompt": prompt, "aspectRatio": "16:9"}
     resp = requests.post(URL_SUBMIT_VIDEO, json=payload, headers=headers)
-    if resp.status_code != 200:
+    if resp.status_code not in [200, 201]:
         logs.append(f"Submit video failed: {resp.status_code}")
         raise Exception("Image-to-video submit failed.")
     return resp.json().get('taskId')
@@ -421,7 +421,7 @@ def submit_text_to_video(token, prompt, aspect_ratio, logs):
     headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
     payload = {"prompt": prompt, "aspectRatio": aspect_ratio}
     resp = requests.post(URL_SUBMIT_TXT_VIDEO, json=payload, headers=headers)
-    if resp.status_code != 200:
+    if resp.status_code not in [200, 201]:
         logs.append(f"Submit text-to-video failed: {resp.status_code}")
         raise Exception("Text-to-video submit failed.")
     return resp.json().get('taskId')
