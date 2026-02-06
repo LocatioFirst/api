@@ -402,9 +402,20 @@ def submit_text_to_image(token, prompt, aspect_ratio, logs):
     payload = {"prompt": prompt, "aspectRatio": aspect_ratio}
     resp = requests.post(URL_SUBMIT_IMG, json=payload, headers=headers)
     if resp.status_code not in [200, 201]:
-        logs.append(f"Submit image failed: {resp.status_code}")
+        logs.append(f"Submit image failed: {resp.status_code} - {resp.text}")
         raise Exception("Text-to-image submit failed.")
-    return resp.json().get('taskId')
+    
+    try:
+        data = resp.json()
+        logs.append(f"Submit response: {data}")
+        task_id = data.get('taskId')
+        if not task_id:
+            logs.append(f"No taskId in response: {data}")
+            raise Exception("No taskId in response")
+        return task_id
+    except Exception as e:
+        logs.append(f"Failed to parse response: {resp.text}")
+        raise
 
 def submit_image_to_video(token, image_url, prompt, logs):
     """Submits image-to-video task."""
@@ -412,9 +423,20 @@ def submit_image_to_video(token, image_url, prompt, logs):
     payload = {"imageUrl": image_url, "prompt": prompt, "aspectRatio": "16:9"}
     resp = requests.post(URL_SUBMIT_VIDEO, json=payload, headers=headers)
     if resp.status_code not in [200, 201]:
-        logs.append(f"Submit video failed: {resp.status_code}")
+        logs.append(f"Submit video failed: {resp.status_code} - {resp.text}")
         raise Exception("Image-to-video submit failed.")
-    return resp.json().get('taskId')
+    
+    try:
+        data = resp.json()
+        logs.append(f"Submit response: {data}")
+        task_id = data.get('taskId')
+        if not task_id:
+            logs.append(f"No taskId in response: {data}")
+            raise Exception("No taskId in response")
+        return task_id
+    except Exception as e:
+        logs.append(f"Failed to parse response: {resp.text}")
+        raise
 
 def submit_text_to_video(token, prompt, aspect_ratio, logs):
     """Submits text-to-video task."""
@@ -422,9 +444,20 @@ def submit_text_to_video(token, prompt, aspect_ratio, logs):
     payload = {"prompt": prompt, "aspectRatio": aspect_ratio}
     resp = requests.post(URL_SUBMIT_TXT_VIDEO, json=payload, headers=headers)
     if resp.status_code not in [200, 201]:
-        logs.append(f"Submit text-to-video failed: {resp.status_code}")
+        logs.append(f"Submit text-to-video failed: {resp.status_code} - {resp.text}")
         raise Exception("Text-to-video submit failed.")
-    return resp.json().get('taskId')
+    
+    try:
+        data = resp.json()
+        logs.append(f"Submit response: {data}")
+        task_id = data.get('taskId')
+        if not task_id:
+            logs.append(f"No taskId in response: {data}")
+            raise Exception("No taskId in response")
+        return task_id
+    except Exception as e:
+        logs.append(f"Failed to parse response: {resp.text}")
+        raise
 
 def wait_for_completion(token, deevid_task_id, logs):
     """Waits for task completion by polling assets."""
@@ -434,22 +467,33 @@ def wait_for_completion(token, deevid_task_id, logs):
         try:
             resp = requests.get(URL_ASSETS, headers=headers)
             if resp.status_code in [200, 201]:
-                assets = resp.json()
-                for asset in assets:
-                    if asset.get('taskId') == deevid_task_id:
-                        status = asset.get('status')
-                        logs.append(f"Status: {status}")
-                        if status == 'COMPLETED':
-                            media_url = asset.get('medias', [{}])[0].get('url')
-                            if media_url:
-                                logs.append(f"Video ready: {media_url}")
-                                return media_url
-                        if status in ['FAILED', 'CANCELLED']:
-                            raise Exception(f"Task failed with status {status}")
+                try:
+                    assets = resp.json()
+                    # Assets bir liste olmalı
+                    if not isinstance(assets, list):
+                        logs.append(f"Assets response is not a list: {type(assets)} - {assets}")
+                        time.sleep(5)
+                        continue
+                    
+                    for asset in assets:
+                        if asset.get('taskId') == deevid_task_id:
+                            status = asset.get('status')
+                            logs.append(f"Status: {status}")
+                            if status == 'COMPLETED':
+                                media_url = asset.get('medias', [{}])[0].get('url')
+                                if media_url:
+                                    logs.append(f"Media ready: {media_url}")
+                                    return media_url
+                            if status in ['FAILED', 'CANCELLED']:
+                                raise Exception(f"Task failed with status {status}")
+                except ValueError as e:
+                    logs.append(f"Failed to parse assets JSON: {resp.text[:200]}")
+            else:
+                logs.append(f"Assets request failed: {resp.status_code}")
         except Exception as e:
             logs.append(f"Poll error: {e}")
         time.sleep(5)
-    raise Exception("Timeout waiting for video.")
+    raise Exception("Timeout waiting for completion.")
 
 # --- Task Processing Functions ---
 
