@@ -14,8 +14,6 @@ app = Flask(__name__)
 
 # Initialize database tables on startup
 db.init_db()
-# Resume incomplete tasks
-resume_incomplete_tasks()
 
 # --- Configuration & Constants ---
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
@@ -691,6 +689,9 @@ def delete_account(email):
         return jsonify({"message": f"Account {email} deleted"})
     else:
         return jsonify({"error": "Account not found"}), 404
+
+# Resume incomplete tasks on startup (for both local and production/gunicorn)
+resume_incomplete_tasks()
 
 if __name__ == '__main__':
     # Initialize database
