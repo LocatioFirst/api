@@ -67,9 +67,21 @@ def init_db():
                     result_url TEXT,
                     logs TEXT DEFAULT '[]',
                     mode TEXT,
+                    external_task_id TEXT,
+                    token TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Safely add columns to existing PostgreSQL table
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='external_task_id'")
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE tasks ADD COLUMN external_task_id TEXT")
+            
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='token'")
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE tasks ADD COLUMN token TEXT")
+                
         else:
             # SQLite syntax
             cursor.execute('''
@@ -102,10 +114,20 @@ def init_db():
                     result_url TEXT,
                     logs TEXT DEFAULT '[]',
                     mode TEXT,
+                    external_task_id TEXT,
+                    token TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
                 )
             ''')
+            
+            # Safely add columns to existing SQLite table
+            cursor.execute("PRAGMA table_info(tasks)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'external_task_id' not in columns:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN external_task_id TEXT")
+            if 'token' not in columns:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN token TEXT")
         
         conn.commit()
         conn.close()
@@ -493,3 +515,42 @@ def get_running_task_count():
         row = cursor.fetchone()
         conn.close()
         return dict(row)['count'] if row else 0
+
+
+def update_task_external_data(task_id, external_task_id, token):
+    """Updates external API task ID and token for recovery."""
+    with db_lock:
+        conn = get_connection()
+        if DB_TYPE == 'postgresql':
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE tasks SET external_task_id = %s, token = %s WHERE task_id = %s',
+                (external_task_id, token, task_id)
+            )
+        else:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE tasks SET external_task_id = ?, token = ? WHERE task_id = ?',
+                (external_task_id, token, task_id)
+            )
+        conn.commit()
+        conn.close()
+
+
+def get_incomplete_tasks():
+    """Returns all running/pending tasks that have external IDs to recover."""
+    with db_lock:
+        conn = get_connection()
+        if DB_TYPE == 'postgresql':
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                "SELECT task_id, mode, external_task_id, token FROM tasks WHERE (status = 'running' OR status = 'pending') AND external_task_id IS NOT NULL"
+            )
+        else:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT task_id, mode, external_task_id, token FROM tasks WHERE (status = 'running' OR status = 'pending') AND external_task_id IS NOT NULL"
+            )
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
