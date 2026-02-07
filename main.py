@@ -12,9 +12,6 @@ import database as db
 
 app = Flask(__name__)
 
-# Initialize database tables on startup
-db.init_db()
-
 # --- Configuration & Constants ---
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
 
@@ -44,12 +41,6 @@ DEVICE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# --- Global State (only for running task counter) ---
-STATE = {
-    "running_tasks": 0
-}
-lock = threading.Lock()
-
 # --- Helper Functions ---
 
 def verify_api_key():
@@ -64,26 +55,13 @@ def verify_api_key():
     else:
         provided_key = auth_header
     
-    # Get or create API key in database
-    api_key_id = db.get_or_create_api_key(provided_key)
+    # Get API key in database - only existing keys are allowed
+    api_key_id = db.get_api_key_id(provided_key)
     return api_key_id
 
 def can_start_new_task():
     """Checks if a new task can be started (max concurrent limit)."""
-    with lock:
-        return STATE['running_tasks'] < MAX_CONCURRENT_TASKS
-
-def increment_running_tasks():
-    """Increments the running tasks counter."""
-    with lock:
-        STATE['running_tasks'] += 1
-        print(f"Task started. Running tasks: {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS}")
-
-def decrement_running_tasks():
-    """Decrements the running tasks counter."""
-    with lock:
-        STATE['running_tasks'] = max(0, STATE['running_tasks'] - 1)
-        print(f"Task finished. Running tasks: {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS}")
+    return db.get_running_task_count() < MAX_CONCURRENT_TASKS
 
 def refresh_quota(token):
     """Optional but might be required to activate session."""
@@ -165,7 +143,6 @@ def upload_image(token, image_bytes):
 
 def process_image_task(task_id, params, api_key_id):
     """Worker for image generation."""
-    increment_running_tasks()
     try:
         db.update_task_status(task_id, 'running')
         try:
@@ -243,12 +220,11 @@ def process_image_task(task_id, params, api_key_id):
         except Exception as e:
             db.update_task_status(task_id, 'error')
             db.add_task_log(task_id, str(e))
-    finally:
-        decrement_running_tasks()
+    except Exception:
+        db.update_task_status(task_id, 'error')
 
 def process_video_task(task_id, params, api_key_id):
     """Worker for video generation."""
-    increment_running_tasks()
     try:
         db.update_task_status(task_id, 'running')
         try:
@@ -321,12 +297,11 @@ def process_video_task(task_id, params, api_key_id):
         except Exception as e:
             db.update_task_status(task_id, 'error')
             db.add_task_log(task_id, str(e))
-    finally:
-        decrement_running_tasks()
+    except Exception:
+        db.update_task_status(task_id, 'error')
 
 def process_tts_task(task_id, params):
     """Worker for ElevenLabs TTS generation."""
-    increment_running_tasks()
     try:
         db.update_task_status(task_id, 'running')
         try:
@@ -387,14 +362,13 @@ def process_tts_task(task_id, params):
         except Exception as e:
             db.update_task_status(task_id, 'error')
             db.add_task_log(task_id, str(e))
-    finally:
-        decrement_running_tasks()
+    except Exception:
+        db.update_task_status(task_id, 'error')
 
 # --- Recovery Logic ---
 
 def poll_image_recovery(task_id, api_task_id, token):
     """Polling worker for recovered image tasks."""
-    increment_running_tasks()
     try:
         headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
         for _ in range(300):
@@ -419,12 +393,10 @@ def poll_image_recovery(task_id, api_task_id, token):
         db.update_task_status(task_id, 'timeout')
     except Exception as e:
         db.add_task_log(task_id, f"Recovery error: {str(e)}")
-    finally:
-        decrement_running_tasks()
+        db.update_task_status(task_id, 'failed')
 
 def poll_video_recovery(task_id, api_task_id, token):
     """Polling worker for recovered video tasks."""
-    increment_running_tasks()
     try:
         headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
         for _ in range(600):
@@ -451,24 +423,26 @@ def poll_video_recovery(task_id, api_task_id, token):
         db.update_task_status(task_id, 'timeout')
     except Exception as e:
         db.add_task_log(task_id, f"Recovery error: {str(e)}")
-    finally:
-        decrement_running_tasks()
+        db.update_task_status(task_id, 'failed')
 
 def resume_incomplete_tasks():
     """Finds incomplete tasks and starts recovery polling."""
     print("Checking for incomplete tasks to recover...")
-    tasks = db.get_incomplete_tasks()
-    for t in tasks:
-        task_id = t['task_id']
-        mode = t['mode']
-        external_id = t['external_task_id']
-        token = t['token']
-        
-        print(f"Resuming task {task_id} ({mode}) - External ID: {external_id}")
-        if mode == 'image':
-            threading.Thread(target=poll_image_recovery, args=(task_id, external_id, token)).start()
-        elif mode == 'video':
-            threading.Thread(target=poll_video_recovery, args=(task_id, external_id, token)).start()
+    try:
+        tasks = db.get_incomplete_tasks()
+        for t in tasks:
+            task_id = t['task_id']
+            mode = t['mode']
+            external_id = t['external_task_id']
+            token = t['token']
+            
+            print(f"Resuming task {task_id} ({mode}) - External ID: {external_id}")
+            if mode == 'image':
+                threading.Thread(target=poll_image_recovery, args=(task_id, external_id, token)).start()
+            elif mode == 'video':
+                threading.Thread(target=poll_video_recovery, args=(task_id, external_id, token)).start()
+    except Exception as e:
+        print(f"Error during task recovery check: {e}")
 
 # --- API Routes ---
 
@@ -485,10 +459,11 @@ def generate_image():
     if db.get_account_count(api_key_id) == 0:
         return jsonify({"error": "No accounts available"}), 503
     
-    if not can_start_new_task():
+    running_count = db.get_running_task_count()
+    if running_count >= MAX_CONCURRENT_TASKS:
         return jsonify({
             "error": "Maximum concurrent tasks reached",
-            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+            "message": f"Currently {running_count}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
         }), 429
     
     task_id = str(uuid.uuid4())
@@ -510,10 +485,11 @@ def generate_video():
     if db.get_account_count(api_key_id) == 0:
         return jsonify({"error": "No accounts available"}), 503
     
-    if not can_start_new_task():
+    running_count = db.get_running_task_count()
+    if running_count >= MAX_CONCURRENT_TASKS:
         return jsonify({
             "error": "Maximum concurrent tasks reached",
-            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+            "message": f"Currently {running_count}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
         }), 429
     
     task_id = str(uuid.uuid4())
@@ -524,21 +500,6 @@ def generate_video():
 
 @app.route('/api/generate/tts', methods=['POST'])
 def generate_tts():
-    """
-    ElevenLabs Text-to-Speech endpoint
-    
-    Required:
-    - text: Metni ses dosyasına çevirir
-    
-    Optional:
-    - voice_id: Ses ID'si (default: 'EXAVITQu4vr4xnSDxMaL' - Bella)
-    - speed: Ses hızı (0.25 - 4.0, default: 1.0)
-    - stability: Ses stabilitesi (0.0 - 1.0, default: 0.5)
-    - similarity_boost: Benzerlik artırma (0.0 - 1.0, default: 0.75)
-    - style: Ses stili (0.0 - 1.0, default: 0.0)
-    - model_id: Model ID (default: 'eleven_multilingual_v2')
-    - use_speaker_boost: Konuşmacı güçlendirme (default: True)
-    """
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -550,10 +511,11 @@ def generate_tts():
     if not ELEVENLABS_API_KEY:
         return jsonify({"error": "ElevenLabs API key not configured"}), 500
     
-    if not can_start_new_task():
+    running_count = db.get_running_task_count()
+    if running_count >= MAX_CONCURRENT_TASKS:
         return jsonify({
             "error": "Maximum concurrent tasks reached",
-            "message": f"Currently {STATE['running_tasks']}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
+            "message": f"Currently {running_count}/{MAX_CONCURRENT_TASKS} tasks running. Please wait."
         }), 429
     
     task_id = str(uuid.uuid4())
@@ -564,7 +526,6 @@ def generate_tts():
 
 @app.route('/api/elevenlabs/voices', methods=['GET'])
 def get_elevenlabs_voices():
-    """ElevenLabs'daki mevcut sesleri listeler"""
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -604,14 +565,14 @@ def get_task_status(task_id):
 
 @app.route('/api/status', methods=['GET'])
 def get_all_tasks_status():
-    """Returns all tasks with their current status"""
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
     
+    running_count = db.get_running_task_count()
     return jsonify({
         "tasks": db.get_all_tasks(api_key_id),
-        "running_tasks": STATE['running_tasks'],
+        "running_tasks": running_count,
         "max_concurrent": MAX_CONCURRENT_TASKS
     })
 
@@ -621,23 +582,16 @@ def get_quota():
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
     
+    running_count = db.get_running_task_count()
     return jsonify({
         "quota": db.get_account_count(api_key_id),
-        "running_tasks": STATE['running_tasks'],
+        "running_tasks": running_count,
         "max_concurrent": MAX_CONCURRENT_TASKS,
-        "available_slots": MAX_CONCURRENT_TASKS - STATE['running_tasks']
+        "available_slots": MAX_CONCURRENT_TASKS - running_count
     })
-
-# --- Account Management Routes ---
 
 @app.route('/api/accounts/add', methods=['POST'])
 def add_accounts():
-    """
-    Add accounts for this API key.
-    
-    Body:
-    - accounts: List of strings in "email:password" format
-    """
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -666,7 +620,6 @@ def add_accounts():
 
 @app.route('/api/accounts', methods=['GET'])
 def get_accounts():
-    """Returns account list for this API key"""
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -680,7 +633,6 @@ def get_accounts():
 
 @app.route('/api/accounts/<email>', methods=['DELETE'])
 def delete_account(email):
-    """Deletes an account by email"""
     api_key_id = verify_api_key()
     if not api_key_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -690,17 +642,14 @@ def delete_account(email):
     else:
         return jsonify({"error": "Account not found"}), 404
 
-# Resume incomplete tasks on startup (for both local and production/gunicorn)
+# --- Startup ---
+
+# Initialize database
+db.init_db()
+# Resume incomplete tasks on startup
 resume_incomplete_tasks()
 
 if __name__ == '__main__':
-    # Initialize database
-    db.init_db()
-    print("Database initialized.")
-    
-    # Resume incomplete tasks
-    resume_incomplete_tasks()
-    
     print(f"Maximum concurrent tasks: {MAX_CONCURRENT_TASKS}")
     print("API ready. Use any API key to authenticate - each key has isolated data.")
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
