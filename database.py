@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 
 # PostgreSQL Configuration
-DATABASE_URL = "postgresql://db_zj5l_user:J4qUrFeAShUmiKHbXE18gGrmXGDvhCh4@dpg-d63knr8gjchc73958hd0-a/db_zj5l"
+DATABASE_URL = "postgresql://db_zj5l_user:J4qUrFeAShUmiKHbXE18gGrmXGDvhCh4@dpg-d63knr8gjchc73958hd0-a.virginia-postgres.render.com/db_zj5l"
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -302,9 +302,9 @@ def get_all_accounts(api_key_id):
 
 
 def get_account_count(api_key_id):
-    """Returns count of accounts for an API key."""
+    """Returns count of available (unused) accounts for an API key."""
     result = _execute_query(
-        'SELECT COUNT(*) as count FROM accounts WHERE api_key_id = %s' if DB_TYPE == 'postgresql' else 'SELECT COUNT(*) as count FROM accounts WHERE api_key_id = ?',
+        'SELECT COUNT(*) as count FROM accounts WHERE api_key_id = %s AND used = 0' if DB_TYPE == 'postgresql' else 'SELECT COUNT(*) as count FROM accounts WHERE api_key_id = ? AND used = 0',
         (api_key_id,),
         fetch_one=True
     )
