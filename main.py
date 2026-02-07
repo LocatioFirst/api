@@ -14,6 +14,8 @@ app = Flask(__name__)
 
 # Initialize database tables on startup
 db.init_db()
+# Resume incomplete tasks
+resume_incomplete_tasks()
 
 # --- Configuration & Constants ---
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
@@ -217,6 +219,7 @@ def process_image_task(task_id, params, api_key_id):
                 return
 
             api_task_id = str(resp_json['data']['data']['taskId'])
+            db.update_task_external_data(task_id, api_task_id, token)
             db.add_task_log(task_id, f"API Task ID: {api_task_id}")
 
             for _ in range(300):
@@ -292,6 +295,8 @@ def process_video_task(task_id, params, api_key_id):
                 return
 
             api_task_id = str(resp_json['data']['data']['taskId'])
+            db.update_task_external_data(task_id, api_task_id, token)
+            db.add_task_log(task_id, f"API Task ID: {api_task_id}")
             
             for _ in range(600):
                 time.sleep(5)
@@ -386,6 +391,86 @@ def process_tts_task(task_id, params):
             db.add_task_log(task_id, str(e))
     finally:
         decrement_running_tasks()
+
+# --- Recovery Logic ---
+
+def poll_image_recovery(task_id, api_task_id, token):
+    """Polling worker for recovered image tasks."""
+    increment_running_tasks()
+    try:
+        headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
+        for _ in range(300):
+            time.sleep(5)
+            try:
+                poll = requests.get(URL_ASSETS, headers=headers).json()
+                groups = poll.get('data', {}).get('data', {}).get('groups', [])
+                for group in groups:
+                    for item in group.get('items', []):
+                        creation = item.get('detail', {}).get('creation', {})
+                        if str(creation.get('taskId')) == api_task_id:
+                            if creation.get('taskState') == 'SUCCESS':
+                                urls = creation.get('noWaterMarkImageUrl', [])
+                                if urls:
+                                    db.update_task_status(task_id, 'completed', urls[0])
+                                    return
+                            elif creation.get('taskState') == 'FAIL':
+                                db.update_task_status(task_id, 'failed')
+                                return
+            except:
+                pass
+        db.update_task_status(task_id, 'timeout')
+    except Exception as e:
+        db.add_task_log(task_id, f"Recovery error: {str(e)}")
+    finally:
+        decrement_running_tasks()
+
+def poll_video_recovery(task_id, api_task_id, token):
+    """Polling worker for recovered video tasks."""
+    increment_running_tasks()
+    try:
+        headers = {"authorization": f"Bearer {token}", **DEVICE_HEADERS}
+        for _ in range(600):
+            time.sleep(10)
+            try:
+                poll = requests.get(URL_VIDEO_TASKS, headers=headers).json()
+                video_list = poll.get('data', {}).get('data', {}).get('data', [])
+                if not video_list and isinstance(poll.get('data', {}).get('data'), list):
+                    video_list = poll['data']['data']
+                    
+                for v in video_list:
+                    if str(v.get('taskId')) == api_task_id:
+                        if v.get('taskState') == 'SUCCESS':
+                            url = v.get('noWaterMarkVideoUrl') or v.get('noWatermarkVideoUrl')
+                            if isinstance(url, list) and url: url = url[0]
+                            if url:
+                                db.update_task_status(task_id, 'completed', url)
+                                return
+                        elif v.get('taskState') == 'FAIL':
+                            db.update_task_status(task_id, 'failed')
+                            return
+            except:
+                pass
+        db.update_task_status(task_id, 'timeout')
+    except Exception as e:
+        db.add_task_log(task_id, f"Recovery error: {str(e)}")
+    finally:
+        decrement_running_tasks()
+
+def resume_incomplete_tasks():
+    """Finds incomplete tasks and starts recovery polling."""
+    print("Checking for incomplete tasks to recover...")
+    tasks = db.get_incomplete_tasks()
+    for t in tasks:
+        task_id = t['task_id']
+        mode = t['mode']
+        external_id = t['external_task_id']
+        token = t['token']
+        
+        print(f"Resuming task {task_id} ({mode}) - External ID: {external_id}")
+        if mode == 'image':
+            threading.Thread(target=poll_image_recovery, args=(task_id, external_id, token)).start()
+        elif mode == 'video':
+            threading.Thread(target=poll_video_recovery, args=(task_id, external_id, token)).start()
 
 # --- API Routes ---
 
@@ -611,6 +696,10 @@ if __name__ == '__main__':
     # Initialize database
     db.init_db()
     print("Database initialized.")
+    
+    # Resume incomplete tasks
+    resume_incomplete_tasks()
+    
     print(f"Maximum concurrent tasks: {MAX_CONCURRENT_TASKS}")
     print("API ready. Use any API key to authenticate - each key has isolated data.")
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
