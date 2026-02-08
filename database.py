@@ -350,6 +350,15 @@ def get_next_account(api_key_id):
             return None
 
 
+def release_account(api_key_id, email):
+    """Sets an account used status back to 0 (unused)."""
+    _execute_query(
+        'UPDATE accounts SET used = 0 WHERE api_key_id = %s AND email = %s' if DB_TYPE == 'postgresql' else 'UPDATE accounts SET used = 0 WHERE api_key_id = ? AND email = ?',
+        (api_key_id, email)
+    )
+    return True
+
+
 def delete_account(api_key_id, email):
     """Deletes an account."""
     result = _execute_query(
