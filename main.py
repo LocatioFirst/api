@@ -102,8 +102,12 @@ def login_with_retry(api_key_id):
                     refresh_quota(token)
                     return token, account
             print(f"Login failed for {account['email']}: {resp.status_code} - {resp.text}")
+            # Release account if login fails (invalid credentials or temporary block)
+            db.release_account(api_key_id, account['email'])
         except Exception as e:
             print(f"Login error for {account['email']}: {e}")
+            # Release on connection errors too
+            db.release_account(api_key_id, account['email'])
             
     return None, None
 
@@ -167,6 +171,8 @@ def process_image_task(task_id, params, api_key_id):
                 else:
                     db.update_task_status(task_id, 'failed')
                     db.add_task_log(task_id, "Image upload failed.")
+                    # Release account on upload failure
+                    db.release_account(api_key_id, account['email'])
                     return
 
             model_version = params.get('model', 'MODEL_FOUR_NANO_BANANA_PRO')
@@ -191,6 +197,8 @@ def process_image_task(task_id, params, api_key_id):
             if error and error.get('code') != 0:
                 db.update_task_status(task_id, 'failed')
                 db.add_task_log(task_id, f"Submit error: {resp_json}")
+                # Release account on submission failure
+                db.release_account(api_key_id, account['email'])
                 return
 
             api_task_id = str(resp_json['data']['data']['taskId'])
@@ -213,13 +221,18 @@ def process_image_task(task_id, params, api_key_id):
                                         return
                                 elif creation.get('taskState') == 'FAIL':
                                     db.update_task_status(task_id, 'failed')
+                                    # Release account on task FAIL
+                                    db.release_account(api_key_id, account['email'])
                                     return
                 except:
                     pass
             db.update_task_status(task_id, 'timeout')
+            db.release_account(api_key_id, account['email'])
         except Exception as e:
             db.update_task_status(task_id, 'error')
             db.add_task_log(task_id, str(e))
+            if 'account' in locals() and account:
+                db.release_account(api_key_id, account['email'])
     except Exception:
         db.update_task_status(task_id, 'error')
 
@@ -250,6 +263,7 @@ def process_video_task(task_id, params, api_key_id):
                 img_id = upload_image(token, img_data)
                 if not img_id:
                     db.update_task_status(task_id, 'failed')
+                    db.release_account(api_key_id, account['email'])
                     return
                 payload["userImageId"] = int(str(img_id).strip())
                 payload["modelVersion"] = "MODEL_ELEVEN_IMAGE_TO_VIDEO_V2"
@@ -266,6 +280,7 @@ def process_video_task(task_id, params, api_key_id):
             if error and error.get('code') != 0:
                 db.update_task_status(task_id, 'failed')
                 db.add_task_log(task_id, f"Submit error: {resp_json}")
+                db.release_account(api_key_id, account['email'])
                 return
 
             api_task_id = str(resp_json['data']['data']['taskId'])
@@ -290,13 +305,17 @@ def process_video_task(task_id, params, api_key_id):
                                     return
                             elif v.get('taskState') == 'FAIL':
                                 db.update_task_status(task_id, 'failed')
+                                db.release_account(api_key_id, account['email'])
                                 return
                 except:
                     pass
             db.update_task_status(task_id, 'timeout')
+            db.release_account(api_key_id, account['email'])
         except Exception as e:
             db.update_task_status(task_id, 'error')
             db.add_task_log(task_id, str(e))
+            if 'account' in locals() and account:
+                db.release_account(api_key_id, account['email'])
     except Exception:
         db.update_task_status(task_id, 'error')
 
