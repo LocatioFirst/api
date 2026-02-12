@@ -8,9 +8,11 @@ import base64
 from io import BytesIO
 from PIL import Image
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import database as db
 
 app = Flask(__name__)
+CORS(app)
 
 # --- Configuration & Constants ---
 API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzM0OTY5NjAwLAogICJleHAiOiAxODkyNzM2MDAwCn0.4NnK23LGYvKPGuKI5rwQn2KbLMzzdE4jXpHwbGCqPqY"
